@@ -37,7 +37,7 @@ async def rag_answer(request: RagRequest):
 
     async def generate_stream() -> AsyncGenerator[str, None]:  # 异步生成器
         prompt = ChatPromptTemplate.from_template(
-            "基于以下上下文回答问题：\n{context}\n\n问题：{question}"
+            "基于以下上下文回答问题：\n{context}\n\n问题: {question}"
         )
         chain = prompt | llm
 

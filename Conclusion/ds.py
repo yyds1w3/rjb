@@ -43,20 +43,38 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 runnable = prompt | llm | parser
 store = {}
-REDIS_URL = "redis://localhost:6379/0"
+embedder = OllamaEmbeddings(model="nomic-embed-text")
+vector_db = FAISS.load_local("./vector_db", embedder, allow_dangerous_deserialization=True) # 仅仅加载自己的数据库，不然可能恶意代码植入
+class RagRequest(BaseModel):
+    question: str
+@app.post("/ask")
+async def rag_answer(request: RagRequest):
+    docs = vector_db.similarity_search(request.question, k=3)
+    context = "\n\n".join([doc.page_content for doc in docs])
+    async def generate_stream() -> AsyncGenerator[str, None]:  # 异步生成器
+        prompt = ChatPromptTemplate.from_template(
+            "基于以下上下文回答问题：\n{context}\n\n问题: {question}"
+        )
+        chain = prompt | llm
 
+        # 使用异步流式调用 (关键修改！)
+        async for chunk in chain.astream({"context": context, "question": request.question}):
+            yield str(chunk.content)  # 确保返回字符串
+            await asyncio.sleep(0.02)  # 控制流速
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream"
+    )
 # 根据session的id来得到历史记录
 def get_session_history(session_id:str) -> BaseChatMessageHistory:
     if session_id not in store:
         store[session_id] = ChatMessageHistory()
     return store[session_id]
-def get_message_history(session_id:str) -> RedisChatMessageHistory:
-    return RedisChatMessageHistory(session_id, url=REDIS_URL)
 # 创建一个有历史记录的runnable
 with_message_history = RunnableWithMessageHistory(
         runnable,
-        # get_session_history,
-        get_message_history,
+        get_session_history,
         input_messages_key="input",
         history_messages_key="history"
         )
